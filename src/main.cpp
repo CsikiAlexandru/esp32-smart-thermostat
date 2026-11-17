@@ -1,13 +1,17 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <LittleFS.h>
 #include "senzor.h"
 #include "termostat.h"
+#include "afisaj.h"
 const char *ssid = "WIFI_NETWORK";
 const char *password = "WIFI_NETWORK_PASSWORD";
-senzor s(4);
+SenzorDHT s(4);
 termostat t(2, 22.0);
 WebServer server(80);
+afisaj oled;
+String ipLocal = "0.0.0.0";
 
 void conectareWiFi()
 {
@@ -45,55 +49,28 @@ void conectareWiFi()
 
 void handleRoot()
 {
-
   float tempCurenta = s.citeste_temperatura();
-
+  float umidCurenta = s.citeste_umiditate();
   t.evaluare(tempCurenta);
 
-  String html = "<!DOCTYPE html><html>";
-  html += "<head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-  html += "<title>Termostat ESP32</title>";
+  File file = LittleFS.open("/index.html", "r");
+  if (!file) {
+    server.send(500, "text/plain", "Eroare: index.html lipseste din LittleFS!");
+    return;
+  }
 
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }";
-  html += ".card { display: inline-block; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }";
-  html += "h1 { color: #333; margin-bottom: 20px; }";
-  html += ".status { font-size: 1.2em; margin: 15px 0; }";
-  html += ".ON { color: #28a745; font-weight: bold; }";
-  html += ".OFF { color: #dc3545; font-weight: bold; }";
-  html += "input[type=number] { padding: 8px; width: 80px; font-size: 1em; border: 1px solid #ccc; border-radius: 4px; }";
-  html += "input[type=submit] { padding: 8px 15px; font-size: 1em; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }";
-  html += "input[type=submit]:hover { background-color: #0056b3; }";
-  html += "</style>";
-  html += "</head><body>";
+  String html = file.readString();
+  file.close();
 
-  html += "<div class='card'>";
-  html += "<h1>Termostat Inteligent ESP32</h1>";
-
-  html += "<p class='status'><strong>Temperatura curentă:</strong> " + String(tempCurenta, 1) + " &deg;C</p>";
-
-  String stareText = t.get_stare() ? "<span class='ON'>PORNIT</span>" : "<span class='OFF'>OPRIT</span>";
-  html += "<p class='status'><strong>Stare ventilator/LED:</strong> " + stareText + "</p>";
-
-  html += "<p class='status'><strong>Prag setat în prezent:</strong> " + String(t.get_prag(), 1) + " &deg;C</p>";
-
-  html += "<form action='/set' method='GET'>";
-  html += "<label>Setează prag nou (&deg;C): </label>";
-
-  html += "<input type='number' step='0.5' name='prag' value='" + String(t.get_prag(), 1) + "' required> ";
-
-  html += "<input type='submit' value='Aplică'>";
-  html += "</form>";
-
-  html += "<br><br><a href='/'><button style='padding: 6px 12px; cursor:pointer;'>Reîmprospătează pagina</button></a>";
-  html += "</div>";
-
-  html += "</body></html>";
+  html.replace("%TEMP%", String(tempCurenta, 1));
+  html.replace("%UMID%", String(umidCurenta, 0));
+  html.replace("%STARE_CLASA%", t.get_stare() ? "ON" : "OFF");
+  html.replace("%STARE_TEXT%", t.get_stare() ? "PORNIT" : "OPRIT");
+  html.replace("%PRAG%", String(t.get_prag(), 1));
 
   server.send(200, "text/html", html);
 }
+
 void handleSetPrag()
 {
 
@@ -112,21 +89,41 @@ void handleSetPrag()
 }
 
 void setup()
-{
+{ 
   Serial.begin(115200);
+  if (!LittleFS.begin(true))
+  {
+    Serial.println("Eroare la montarea LittleFS!");
+  }
+ 
   s.begin();
-  pinMode(2, OUTPUT);
+  oled.begin();
+  oled.afiseaza_mesaj("Conectare WiFi...");
+
   conectareWiFi();
+  ipLocal = WiFi.localIP().toString();
+  oled.afiseaza_mesaj("Conectat!", "IP: " + ipLocal);
+
   server.on("/", handleRoot);
   server.on("/set", handleSetPrag);
   server.begin();
   Serial.println("Serverul Web a fost pornit!");
 }
 
+unsigned long ultimulUpdate = 0;
+const unsigned long intervalCitire = 2000; // 2 secunde
+
 void loop()
 {
-  server.handleClient();
-  float temp = s.citeste_temperatura();
-  t.evaluare(temp);
-  delay(100);
+  server.handleClient(); // Răspunde instant la cererile HTTP
+
+  unsigned long acum = millis();
+  if (acum - ultimulUpdate >= intervalCitire)
+  {
+    ultimulUpdate = acum;
+    float temp = s.citeste_temperatura();
+    float umiditate = s.citeste_umiditate();
+    t.evaluare(temp);
+    oled.actualizeaza(temp, umiditate, t.get_prag(), t.get_stare(), ipLocal);
+  }
 }

@@ -3,11 +3,7 @@
 #include <Arduino.h>
 #include "senzor.h"
 
-senzor::senzor(int pin_ales) : pin(pin_ales), dht(pin_ales, DHT11) {}
-void senzor::begin() {
-    dht.begin();
-}
-float senzor::citeste_temperatura()
+float SenzorDHT::citeste_temperatura()
 {
     float temp = dht.readTemperature();
     if (isnan(temp)) {
@@ -15,4 +11,12 @@ float senzor::citeste_temperatura()
         return 0.0; 
     }
     return temp;
+}
+float SenzorDHT::citeste_umiditate() {
+    float hum = dht.readHumidity();
+    if (isnan(hum)) {
+        Serial.println("Eroare la citirea umiditatii DHT11!");
+        return 0.0;
+    }
+    return hum;
 }
